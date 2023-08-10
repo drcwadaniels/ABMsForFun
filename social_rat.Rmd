@@ -1,0 +1,268 @@
+---
+title: "ABM Tutorial"
+author: "Carter Daniels"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+
+library(pracma)
+library(Hmisc)
+library(gplots)
+
+rm(list=ls())
+#follow that rat!
+
+#an ABM for rats social foraging
+
+#all rats start with an equal probability of following another rat or doing their 
+#own thing (<- NEED TO THINK OF HOW TO BUILD THIS IN)
+
+#all rats have a simple linear operator to learn the value of states of different locations
+#they build a map of the quickest way to reach a goal
+
+#this value generalizes to all surrounding rats according to some spatial-gradient
+#decay
+
+
+
+```
+
+```{r}
+
+#params
+
+#world size
+rows = 11
+cols = rows
+
+#rats
+n_rats = 1
+p_move = 1
+
+start_position <- c(6,6)
+
+#learning rates
+alpha <- runif(n_rats,0,0.1)
+
+total_steps = 100000
+sims = 1000
+mem_length = 5; 
+
+
+```
+
+```{r}
+#initial world_matrix
+world_matrix <- matrix(data=NA, nrow = rows, ncol = cols)
+world_matrix[is.na(world_matrix)] <- 0
+
+#initialize rat representations of world_matrix
+rat_representation <- NULL
+for (i in 1:n_rats)
+{
+  rat_representation[[i]] <- world_matrix
+}
+
+
+#place reinforcers in the world
+world_matrix[6,11]<-1
+world_matrix[6,1]<-1
+
+
+image(t(world_matrix))
+
+
+world_matrix_wstart <-  world_matrix
+world_matrix_wstart[start_position[1],start_position[2]]<- -1
+
+image(t(world_matrix_wstart))
+
+
+```
+
+```{r}
+
+#functions
+
+move_rat <- function(n_rats,p_move)
+{
+
+  #which rats decide to move
+  rats_move <- runif(n_rats,0,1)
+  p_move_rat<- rats_move
+  p_move_rat[rats_move<=p_move] <- 1
+  p_move_rat[rats_move>p_move] <- 0
+  return(p_move_rat)
+  
+}
+
+#get all adjacent locations
+find_locations <- function(n_rats,rats_moving,coord_matrix,max_idx)
+{
+  #find adjacent locations 
+  possible_coords_earat <- NULL
+  for (i in 1:n_rats)
+  {
+    current_coords <- coord_matrix[i,]
+    adjacent_coords <- pracma::repmat(current_coords,8,1)
+    if (rats_moving[i] ==1)
+    {
+    #north
+    adjacent_coords[1,1]<-adjacent_coords[1,1]-1
+    #northwest
+    adjacent_coords[2,]<-adjacent_coords[2,]-1
+    #west
+    adjacent_coords[3,2]<-adjacent_coords[3,2]-1
+    #southwest
+    adjacent_coords[4,1]<-adjacent_coords[4,1]+1
+    adjacent_coords[4,2]<-adjacent_coords[4,2]-1
+    #south
+    adjacent_coords[5,1]<-adjacent_coords[5,1]+1
+    #southeast
+    adjacent_coords[6,]<-adjacent_coords[6,]+1
+    #east
+    adjacent_coords[7,2]<-adjacent_coords[7,2]+1
+    #northeast
+    adjacent_coords[8,1]<-adjacent_coords[8,1]-1
+    adjacent_coords[8,2]<-adjacent_coords[8,2]+1
+
+    adjacent_coords[adjacent_coords>max_idx]<-NA
+    adjacent_coords[adjacent_coords<1]<-NA
+    adjacent_coords <- adjacent_coords[complete.cases(adjacent_coords),]
+    possible_coords_earat[[i]] <- adjacent_coords
+    }
+    else
+    {
+      possible_coords_earat[[i]] <- adjacent_coords
+    }
+  }
+  return(possible_coords_earat)
+}
+
+
+choice <- function(n_rats,possible_coords,rat_representation)
+{
+  coord_choice <- NULL
+  for (i in 1:n_rats)
+  {
+    pcoords <- possible_coords[[i]]
+    temp_matrix <- rat_representation[[i]]
+    coord_values <- temp_matrix[pcoords]
+    multiple_max <- coord_values==max(coord_values)
+    if (sum(multiple_max) == 1)
+    {
+      select_coord <- pcoords[which.max(coord_values),]
+    } else {
+      rselect <- sample(which(multiple_max %in% c(TRUE)),1)
+      select_coord <- pcoords[rselect,]
+    }
+    coord_choice[[i]] <- select_coord
+  }
+  return(coord_choice)
+}
+
+state_reward_update <- function(n_rats,selected_coords,world_matrix,
+                                rat_representation,mem_coords,alpha)
+{
+  for (i in 1:n_rats)
+  {
+
+    temp_coord <- selected_coords[[i]]
+    prev_coord <- mem_coords[,1:2,i]
+    reward_coord <- find.matches(t(as.matrix(temp_coord)),prev_coord)
+    prev_coord <- prev_coord[-reward_coord$matches[1],]
+    prev_coord <- na.omit(prev_coord)
+    temp_mat <- rat_representation[[i]]
+    reward <- world_matrix[temp_coord[1],temp_coord[2]]
+    #update current state
+    temp_mat[temp_coord[1],temp_coord[2]] <- 
+      temp_mat[temp_coord[1],temp_coord[2]] + 
+      alpha[i]*(reward - temp_mat[temp_coord[1],temp_coord[2]])
+    #update previous states
+    dist_from_reward <- mem_coords[,3,i]
+    dist_from_reward <- na.omit(dist_from_reward)
+    dist_from_reward <- dist_from_reward/max(dist_from_reward)
+    dist_from_reward <- dist_from_reward[dist_from_reward < 1.0]
+    
+    temp_mat[prev_coord] <- temp_mat[prev_coord] + 
+      (0.5*dist_from_reward)*alpha[i]*(reward - temp_mat[prev_coord])
+    
+    #collect rat representation
+    rat_representation[[i]] <- temp_mat
+  }
+  return(list(reward,rat_representation))
+}
+
+update_coords <- function(n_rats,selected_coords)
+{
+  updated_coords <- matrix(data=t(as.data.frame(selected_coords)),
+                           nrow = n_rats,ncol = 2)
+  return(updated_coords)
+}
+
+
+```
+
+
+```{r}
+
+#data_collection11
+collect_coord_mat <- array(data=NA,
+                           dim=c(total_steps,2,sims,n_rats))
+
+for (s in 1:sims)
+{
+  #initialize rats and start in center of matrix
+  coord_matrix <- matrix(data=NA,nrow=n_rats,ncol=2)
+  coord_matrix[,c(1:2)]<-start_position
+  collect_coord_mat[1,,s,1] <- coord_matrix
+  
+  #memory of coords
+  mem_coords<-array(data=NA,c(mem_length,3,n_rats))
+
+  r = 0
+  steps = 0
+  mem_step = 0
+  
+  while (r < 1)
+  {
+    steps <- steps + 1
+    mem_step = mem_step + 1
+    if (mem_step > 5) {mem_step = 1}
+    rats_moving <- move_rat(n_rats,p_move)
+    possible_coords <- find_locations(n_rats,rats_moving,coord_matrix,rows)
+    selected_coords <- choice(n_rats,possible_coords,rat_representation)
+    ##create memory buffer to track coordinates in a session and then
+    #update in proportion to distance from the reward
+    mem_coords[mem_step,1:2,1] <- selected_coords[[1]]
+    mem_coords[mem_step,3,1] <- 1
+    reward_and_rep <- state_reward_update(n_rats,selected_coords,world_matrix,
+                                          rat_representation,mem_coords,alpha)
+    coord_matrix <- update_coords(n_rats,selected_coords)
+    collect_coord_mat[steps+1,,s,1]<-coord_matrix[1,]
+  
+    r <- reward_and_rep[[1]]
+    rat_representation[[1]] <- reward_and_rep[[2]][[1]]
+    mem_coords[,3,1] <- mem_coords[,3,1]*0.8
+
+
+  }
+}
+
+
+plot(collect_coord_mat[,1,sims,1],collect_coord_mat[,2,sims,1])
+# plot(collect_coord_mat[,1,2],collect_coord_mat[,2,2])
+
+
+plot(collect_coord_mat[c(1:steps),1,sims,1],col="blue", ylim=c(1,11))
+points(collect_coord_mat[c(1:steps),2,sims,1],col="red")
+lines(collect_coord_mat[c(1:steps),1,sims,1],col="blue")
+lines(collect_coord_mat[c(1:steps),2,sims,1],col="red")
+
+# plot(collect_coord_mat[c(1:steps),1,2],col="blue")
+# points(collect_coord_mat[c(1:steps),2,2],col="red")
+# lines(collect_coord_mat[c(1:steps),1,2],col="blue")
+# lines(collect_coord_mat[c(1:steps),2,2],col="red")
+```
