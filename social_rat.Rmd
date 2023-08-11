@@ -48,7 +48,7 @@ alpha <- runif(n_rats,0,0.1)
 
 total_steps = 100000
 sims = 1000
-mem_length = 5; 
+mem_length = 10; 
 
 
 ```
@@ -230,7 +230,7 @@ for (s in 1:sims)
   {
     steps <- steps + 1
     mem_step = mem_step + 1
-    if (mem_step > 5) {mem_step = 1}
+    if (mem_step > mem_length) {mem_step = 1}
     rats_moving <- move_rat(n_rats,p_move)
     possible_coords <- find_locations(n_rats,rats_moving,coord_matrix,rows)
     selected_coords <- choice(n_rats,possible_coords,rat_representation)
